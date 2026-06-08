@@ -1,0 +1,348 @@
+<!--<!DOCTYPE html>-->
+<!--<html>-->
+<!--<head>-->
+<!--    <title>Policy Copy Tool</title>-->
+<!--    <style>-->
+<!--        body {-->
+<!--            font-family: Arial, sans-serif;-->
+<!--            background-color: #f2f2f2;-->
+<!--            margin: 0;-->
+<!--            padding: 0;-->
+<!--            display: flex;-->
+<!--            justify-content: center;-->
+<!--            align-items: center;-->
+<!--            height: 100vh;-->
+<!--        }-->
+
+<!--        .container {-->
+<!--            background-color: #fff;-->
+<!--            padding: 20px;-->
+<!--            border-radius: 5px;-->
+<!--            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);-->
+<!--            width: 60%;-->
+<!--            max-width: 600px;-->
+<!--            box-sizing: border-box;-->
+<!--        }-->
+
+<!--        .header {-->
+<!--            background-color: #d32f2f;-->
+<!--            color: white;-->
+<!--            padding: 5px;-->
+<!--            text-align: center;-->
+<!--            border-radius: 4px 4px 0 0;-->
+<!--            margin-bottom: 0px;-->
+<!--            font-size: 15px;-->
+<!--        }-->
+
+<!--        .form {-->
+<!--            margin: 20px 0;-->
+<!--        }-->
+
+<!--        button, input[type="submit"] {-->
+<!--            background-color: #d32f2f;-->
+<!--            color: white;-->
+<!--            border: none;-->
+<!--            padding: 10px;-->
+<!--            cursor: pointer;-->
+<!--            border-radius: 5px;-->
+<!--            width: 100%;-->
+<!--        }-->
+
+<!--        button:hover, input[type="submit"]:hover {-->
+<!--            background-color: #b71c1c;-->
+<!--        }-->
+
+<!--        button:disabled {-->
+<!--            background-color: #999;-->
+<!--            cursor: not-allowed;-->
+<!--        }-->
+
+<!--        input[type="text"], select {-->
+<!--            padding: 10px;-->
+<!--            margin: 10px 0;-->
+<!--            display: inline-block;-->
+<!--            border: 1px solid #ccc;-->
+<!--            border-radius: 4px;-->
+<!--            box-sizing: border-box;-->
+<!--            width: 100%;-->
+<!--        }-->
+
+<!--        label {-->
+<!--            font-weight: bold;-->
+<!--        }-->
+
+<!--        .loader {-->
+<!--            display: none;-->
+<!--            margin-top: 10px;-->
+<!--            text-align: center;-->
+<!--        }-->
+<!--    </style>-->
+<!--</head>-->
+<!--<body>-->
+<!--<div class="container">-->
+<!--    <div class="header">-->
+<!--        <h1>Policy Copy Tool</h1>-->
+<!--    </div>-->
+
+<!--    <form id="policyForm">-->
+<!--        <div class="form">-->
+<!--			<label for="policyPrefix">Policy Prefix:</label>-->
+<!--			<input type="text" id="policyPrefix" name="policyPrefix" required><br>-->
+
+<!--            <label for="policyNumber">Policy Number:</label>-->
+<!--            <input type="text" id="policyNumber" name="policyNumber" required><br>-->
+
+<!--            <label for="sourceEnv">Select Source Environment:</label>-->
+<!--            <select id="sourceEnv" name="sourceEnv" required>-->
+<!--                <option value="DEV1">PROD</option>-->
+<!--                <option value="DEV2">UAT</option>-->
+<!--            </select><br>-->
+
+<!--            <label for="targetEnv">Select Target Environment:</label>-->
+<!--            <select id="targetEnv" name="targetEnv" required>-->
+<!--                <option value="DEV2">UAT</option>-->
+<!--                <option value="DEV3">DEV</option>-->
+<!--            </select><br>-->
+<!--			-->
+<!--            <button type="submit" id="copyButton">Copy</button>-->
+<!--        </div>-->
+<!--    </form>-->
+
+<!--    <div class="loader" id="loader">-->
+<!--        <p>Processing... Please wait.</p>-->
+<!--    </div>-->
+
+<!--    <div id="message" style="display: none; margin-top: 20px;">-->
+<!--        <p id="messageContent"></p>-->
+<!--    </div>-->
+<!--</div>-->
+
+<!--<script>-->
+<!--        document.getElementById('policyForm').addEventListener('submit', function(event) {-->
+<!--            event.preventDefault();-->
+
+<!--            var policyNumber = document.getElementById('policyNumber').value;-->
+<!--            var sourceEnv = document.getElementById('sourceEnv').value;-->
+<!--            var targetEnv = document.getElementById('targetEnv').value;-->
+<!--			var policyPrefix= document.getElementById('policyPrefix').value;-->
+<!--            var copyButton = document.getElementById('copyButton');-->
+<!--            var loader = document.getElementById('loader');-->
+<!--            var messageDiv = document.getElementById('message');-->
+<!--            var messageContent = document.getElementById('messageContent');-->
+
+<!--            // Disable button and show loading indicator-->
+<!--            copyButton.disabled = true;-->
+<!--            loader.style.display = 'block';-->
+<!--            messageDiv.style.display = 'none';-->
+
+<!--            fetch(`/copy-data?policyNumber=${policyNumber}&sourceEnv=${sourceEnv}&targetEnv=${targetEnv}&policyPrefix=${policyPrefix}`)-->
+<!--            .then(response => response.text())-->
+<!--            .then(data => {-->
+<!--                messageContent.textContent = data;-->
+<!--                messageDiv.style.display = 'block';-->
+<!--            })-->
+<!--            .catch(error => {-->
+<!--                messageContent.textContent = "Error: Unable to copy data.";-->
+<!--                messageDiv.style.display = 'block';-->
+<!--            })-->
+<!--            .finally(() => {-->
+<!--                // Re-enable button and hide loader after request is complete-->
+<!--                copyButton.disabled = false;-->
+<!--                loader.style.display = 'none';-->
+<!--            });-->
+<!--        });-->
+<!--    </script>-->
+<!--</body>-->
+<!--</html>-->
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Policy Copy Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 60%;
+            max-width: 600px;
+            box-sizing: border-box;
+        }
+
+        .header {
+            background-color: #d32f2f;
+            color: white;
+            padding: 5px;
+            text-align: center;
+            border-radius: 4px 4px 0 0;
+            margin-bottom: 0px;
+            font-size: 15px;
+        }
+
+        .form {
+            margin: 20px 0;
+        }
+
+        button, input[type="submit"] {
+            background-color: #d32f2f;
+            color: white;
+            border: none;
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: #b71c1c;
+        }
+
+        button:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+        }
+
+        input[type="text"], select {
+            padding: 10px;
+            margin: 10px 0;
+            display: inline-block;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            width: 100%;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        .loader {
+            display: none;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <div class="header">
+        <h1>Policy Copy Tool</h1>
+    </div>
+
+    <form id="policyForm">
+
+        <div class="form">
+
+            <label for="policyPrefix">Policy Prefix:</label>
+            <input type="text" id="policyPrefix" name="policyPrefix" required>
+
+            <label for="policyNumber">Policy Number:</label>
+            <input type="text" id="policyNumber" name="policyNumber" required>
+
+            <label for="sourceEnv">Select Source Environment:</label>
+            <select id="sourceEnv" name="sourceEnv" required>
+                <option value="DEV1">PROD</option>
+                <option value="DEV2">UAT</option>
+            </select>
+
+            <label for="targetEnv">Select Target Environment:</label>
+            <select id="targetEnv" name="targetEnv" required></select>
+
+            <button type="submit" id="copyButton">Copy</button>
+
+        </div>
+    </form>
+
+    <div class="loader" id="loader">
+        <p>Processing... Please wait.</p>
+    </div>
+
+    <div id="message" style="display:none;margin-top:20px;">
+        <p id="messageContent"></p>
+    </div>
+
+</div>
+
+<script>
+
+    const sourceEnvSelect = document.getElementById("sourceEnv");
+    const targetEnvSelect = document.getElementById("targetEnv");
+
+    // Populate target based on source
+    function updateTargetOptions() {
+
+        const source = sourceEnvSelect.value;
+
+        targetEnvSelect.innerHTML = "";
+
+        if (source === "DEV1") { // PROD
+            targetEnvSelect.add(new Option("UAT", "DEV2"));
+            targetEnvSelect.add(new Option("DEV", "DEV3"));
+        }
+
+        if (source === "DEV2") { // UAT
+            targetEnvSelect.add(new Option("DEV", "DEV3"));
+        }
+    }
+
+    // Initial load
+    updateTargetOptions();
+
+    // On source change
+    sourceEnvSelect.addEventListener("change", updateTargetOptions);
+
+    // Submit handler
+    document.getElementById("policyForm").addEventListener("submit", function(event) {
+
+        event.preventDefault();
+
+        const policyNumber = document.getElementById("policyNumber").value;
+        const sourceEnv = sourceEnvSelect.value;
+        const targetEnv = targetEnvSelect.value;
+        const policyPrefix = document.getElementById("policyPrefix").value;
+
+        const copyButton = document.getElementById("copyButton");
+        const loader = document.getElementById("loader");
+        const messageDiv = document.getElementById("message");
+        const messageContent = document.getElementById("messageContent");
+
+        copyButton.disabled = true;
+        loader.style.display = "block";
+        messageDiv.style.display = "none";
+
+        fetch(`/copy-data?policyNumber=${policyNumber}&sourceEnv=${sourceEnv}&targetEnv=${targetEnv}&policyPrefix=${policyPrefix}`)
+            .then(response => response.text())
+            .then(data => {
+                messageContent.textContent = data;
+                messageDiv.style.display = "block";
+            })
+            .catch(err => {
+                messageContent.textContent = "Error: Unable to copy data.";
+                messageDiv.style.display = "block";
+            })
+            .finally(() => {
+                copyButton.disabled = false;
+                loader.style.display = "none";
+            });
+    });
+
+</script>
+
+</body>
+</html>
