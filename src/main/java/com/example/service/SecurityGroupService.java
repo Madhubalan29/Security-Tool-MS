@@ -1,6 +1,7 @@
 package com.example.service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -11,6 +12,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import javax.sql.DataSource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,6 +66,10 @@ public class SecurityGroupService {
     @Autowired private AsProductSecondaryDevRepository productSecondaryDevRepo;
     @Autowired private AsTransactionSecondaryDevRepository transactionSecondaryDevRepo;
     @Autowired private AsPlanSecondaryDevRepository planSecondaryDevRepo;
+    @Autowired @Qualifier("secondaryDevDataSource")
+    private DataSource secondaryDevDataSource;
+
+
 
     // ===================================================================
     // 0.  GET /api/companies  —  list all companies
@@ -217,84 +225,443 @@ public class SecurityGroupService {
             return dto;
         }
 
-        // ── Fetch all flat auth rows for this group in one pass ─────────
+        JdbcTemplate jdbc = new JdbcTemplate(secondaryDevDataSource);
+        jdbc.setFetchSize(10000);
+
+        class Row {
+            private final Map<String, Object> map;
+            Row(Map<String, Object> map) { this.map = map; }
+            String get(String col) {
+                Object val = map.get(col);
+                return val == null ? "" : val.toString().trim();
+            }
+        }
+
+        // ── Fetch all flat auth rows for this group hierarchically ─────────
         List<AsAuthCompany> companies = authCompanyRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthCompanyPage> companyPages = companyPageRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthCompanyPageButton> companyPageButtons = companyPageButtonRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthCompanyInquiry> companyInquiries = companyInquiryRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthCompanyWebService> companyWebServices = companyWebServiceRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthPlan> plans = authPlanRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthPlanPage> planPages = planPageRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthPlanPageButton> planPageButtons = planPageButtonRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthTransaction> transactions = transactionRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthTransactionButton> transactionButtons = transactionButtonRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthPlanInquiry> planInquiries = planInquiryRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthProduct> products = authProductRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthProductPage> productPages = productPageRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthProductPageButton> productPageButtons = productPageButtonRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthProductTransaction> productTransactions = productTransactionRepo.findBySECURITYGROUPGUID(securityGroupGuid);
-        List<AsAuthProductTransactionButton> productTransactionButtons = productTransactionButtonRepo.findBySECURITYGROUPGUID(securityGroupGuid);
+
+        List<Map<String, Object>> companyPagesRows = jdbc.queryForList(
+            "select /*+ LEADING(c p) USE_NL(p) */ p.AUTHCOMPANYPAGEGUID, p.AUTHCOMPANYGUID, p.AUTHPAGEGUID " +
+            "from ASAUTHCOMPANYPAGE p " +
+            "join ASAUTHCOMPANY c on p.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class CompanyPageProjection implements AsAuthCompanyPageRepository.Projection {
+            private final Row r;
+            CompanyPageProjection(Row r) { this.r = r; }
+            public String getAUTHCOMPANYPAGEGUID() { return r.get("AUTHCOMPANYPAGEGUID"); }
+            public String getAUTHCOMPANYGUID() { return r.get("AUTHCOMPANYGUID"); }
+            public String getAUTHPAGEGUID() { return r.get("AUTHPAGEGUID"); }
+        }
+        List<AsAuthCompanyPageRepository.Projection> companyPages = companyPagesRows.stream()
+                .map(m -> new CompanyPageProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> companyPageButtonsRows = jdbc.queryForList(
+            "select /*+ LEADING(c p b) USE_NL(p b) */ b.AUTHCOMPANYPAGEGUID, b.AUTHBUTTONGUID " +
+            "from ASAUTHCOMPANYPAGEBUTTON b " +
+            "join ASAUTHCOMPANYPAGE p on b.AUTHCOMPANYPAGEGUID = p.AUTHCOMPANYPAGEGUID " +
+            "join ASAUTHCOMPANY c on p.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class CompanyPageButtonProjection implements AsAuthCompanyPageButtonRepository.Projection {
+            private final Row r;
+            CompanyPageButtonProjection(Row r) { this.r = r; }
+            public String getAUTHCOMPANYPAGEGUID() { return r.get("AUTHCOMPANYPAGEGUID"); }
+            public String getAUTHBUTTONGUID() { return r.get("AUTHBUTTONGUID"); }
+        }
+        List<AsAuthCompanyPageButtonRepository.Projection> companyPageButtons = companyPageButtonsRows.stream()
+                .map(m -> new CompanyPageButtonProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> companyInquiriesRows = jdbc.queryForList(
+            "select /*+ LEADING(c i) USE_NL(i) */ i.AUTHCOMPANYINQUIRYGUID, i.AUTHCOMPANYGUID, i.INQUIRYSCREENNAMEGUID " +
+            "from ASAUTHCOMPANYINQUIRY i " +
+            "join ASAUTHCOMPANY c on i.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class CompanyInquiryProjection implements AsAuthCompanyInquiryRepository.Projection {
+            private final Row r;
+            CompanyInquiryProjection(Row r) { this.r = r; }
+            public String getAUTHCOMPANYINQUIRYGUID() { return r.get("AUTHCOMPANYINQUIRYGUID"); }
+            public String getAUTHCOMPANYGUID() { return r.get("AUTHCOMPANYGUID"); }
+            public String getINQUIRYSCREENGUID() { return r.get("INQUIRYSCREENNAMEGUID"); }
+        }
+        List<AsAuthCompanyInquiryRepository.Projection> companyInquiries = companyInquiriesRows.stream()
+                .map(m -> new CompanyInquiryProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> companyWebServicesRows = jdbc.queryForList(
+            "select /*+ LEADING(c w) USE_NL(w) */ w.AUTHWEBSERVICEGUID, w.AUTHCOMPANYGUID " +
+            "from ASAUTHCOMPANYWEBSERVICE w " +
+            "join ASAUTHCOMPANY c on w.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class CompanyWebServiceProjection implements AsAuthCompanyWebServiceRepository.Projection {
+            private final Row r;
+            CompanyWebServiceProjection(Row r) { this.r = r; }
+            public String getAUTHCOMPANYGUID() { return r.get("AUTHCOMPANYGUID"); }
+            public String getAUTHWEBSERVICEGUID() { return r.get("AUTHWEBSERVICEGUID"); }
+        }
+        List<AsAuthCompanyWebServiceRepository.Projection> companyWebServices = companyWebServicesRows.stream()
+                .map(m -> new CompanyWebServiceProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> plansRows = jdbc.queryForList(
+            "select /*+ LEADING(c p) USE_NL(p) */ p.AUTHPLANGUID, p.AUTHCOMPANYGUID, p.PLANGUID " +
+            "from ASAUTHPLAN p " +
+            "join ASAUTHCOMPANY c on p.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class PlanProjection implements AsAuthPlanRepository.Projection {
+            private final Row r;
+            PlanProjection(Row r) { this.r = r; }
+            public String getAUTHPLANGUID() { return r.get("AUTHPLANGUID"); }
+            public String getAUTHCOMPANYGUID() { return r.get("AUTHCOMPANYGUID"); }
+            public String getPLANGUID() { return r.get("PLANGUID"); }
+        }
+        List<AsAuthPlanRepository.Projection> plans = plansRows.stream()
+                .map(m -> new PlanProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> planPagesRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap p) USE_NL(ap p) */ p.AUTHPLANPAGEGUID, p.AUTHPLANGUID, p.AUTHPAGEGUID " +
+            "from ASAUTHPLANPAGE p " +
+            "join ASAUTHPLAN ap on p.AUTHPLANGUID = ap.AUTHPLANGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class PlanPageProjection implements AsAuthPlanPageRepository.Projection {
+            private final Row r;
+            PlanPageProjection(Row r) { this.r = r; }
+            public String getAUTHPLANPAGEGUID() { return r.get("AUTHPLANPAGEGUID"); }
+            public String getAUTHPLANGUID() { return r.get("AUTHPLANGUID"); }
+            public String getAUTHPAGEGUID() { return r.get("AUTHPAGEGUID"); }
+        }
+        List<AsAuthPlanPageRepository.Projection> planPages = planPagesRows.stream()
+                .map(m -> new PlanPageProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> planPageButtonsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap p b) USE_NL(ap p b) */ b.AUTHPLANPAGEGUID, b.AUTHBUTTONGUID " +
+            "from ASAUTHPLANPAGEBUTTON b " +
+            "join ASAUTHPLANPAGE p on b.AUTHPLANPAGEGUID = p.AUTHPLANPAGEGUID " +
+            "join ASAUTHPLAN ap on p.AUTHPLANGUID = ap.AUTHPLANGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class PlanPageButtonProjection implements AsAuthPlanPageButtonRepository.Projection {
+            private final Row r;
+            PlanPageButtonProjection(Row r) { this.r = r; }
+            public String getAUTHPLANPAGEGUID() { return r.get("AUTHPLANPAGEGUID"); }
+            public String getAUTHBUTTONGUID() { return r.get("AUTHBUTTONGUID"); }
+        }
+        List<AsAuthPlanPageButtonRepository.Projection> planPageButtons = planPageButtonsRows.stream()
+                .map(m -> new PlanPageButtonProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> transactionsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap t) USE_NL(ap t) */ t.AUTHTRANSACTIONGUID, t.AUTHPLANGUID, t.TRANSACTIONGUID " +
+            "from ASAUTHTRANSACTION t " +
+            "join ASAUTHPLAN ap on t.AUTHPLANGUID = ap.AUTHPLANGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class TransactionProjection implements AsAuthTransactionRepository.Projection {
+            private final Row r;
+            TransactionProjection(Row r) { this.r = r; }
+            public String getAUTHTRANSACTIONGUID() { return r.get("AUTHTRANSACTIONGUID"); }
+            public String getAUTHPLANGUID() { return r.get("AUTHPLANGUID"); }
+            public String getTRANSACTIONGUID() { return r.get("TRANSACTIONGUID"); }
+        }
+        List<AsAuthTransactionRepository.Projection> transactions = transactionsRows.stream()
+                .map(m -> new TransactionProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> transactionButtonsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap t b) USE_NL(ap t b) */ b.AUTHTRANSACTIONGUID, b.AUTHBUTTONGUID " +
+            "from ASAUTHTRANSACTIONBUTTON b " +
+            "join ASAUTHTRANSACTION t on b.AUTHTRANSACTIONGUID = t.AUTHTRANSACTIONGUID " +
+            "join ASAUTHPLAN ap on t.AUTHPLANGUID = ap.AUTHPLANGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class TransactionButtonProjection implements AsAuthTransactionButtonRepository.Projection {
+            private final Row r;
+            TransactionButtonProjection(Row r) { this.r = r; }
+            public String getAUTHTRANSACTIONGUID() { return r.get("AUTHTRANSACTIONGUID"); }
+            public String getAUTHBUTTONGUID() { return r.get("AUTHBUTTONGUID"); }
+        }
+        List<AsAuthTransactionButtonRepository.Projection> transactionButtons = transactionButtonsRows.stream()
+                .map(m -> new TransactionButtonProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> planInquiriesRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap i) USE_NL(ap i) */ i.AUTHPLANINQUIRYGUID, i.AUTHPLANGUID, i.INQUIRYSCREENNAMEGUID " +
+            "from ASAUTHPLANINQUIRY i " +
+            "join ASAUTHPLAN ap on i.AUTHPLANGUID = ap.AUTHPLANGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class PlanInquiryProjection implements AsAuthPlanInquiryRepository.Projection {
+            private final Row r;
+            PlanInquiryProjection(Row r) { this.r = r; }
+            public String getAUTHPLANINQUIRYGUID() { return r.get("AUTHPLANINQUIRYGUID"); }
+            public String getAUTHPLANGUID() { return r.get("AUTHPLANGUID"); }
+            public String getINQUIRYSCREENGUID() { return r.get("INQUIRYSCREENNAMEGUID"); }
+        }
+        List<AsAuthPlanInquiryRepository.Projection> planInquiries = planInquiriesRows.stream()
+                .map(m -> new PlanInquiryProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> productsRows = jdbc.queryForList(
+            "select /*+ LEADING(c p) USE_NL(p) */ p.AUTHPRODUCTGUID, p.AUTHCOMPANYGUID, p.PRODUCTGUID " +
+            "from ASAUTHPRODUCT p " +
+            "join ASAUTHCOMPANY c on p.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class ProductProjection implements AsAuthProductRepository.Projection {
+            private final Row r;
+            ProductProjection(Row r) { this.r = r; }
+            public String getAUTHPRODUCTGUID() { return r.get("AUTHPRODUCTGUID"); }
+            public String getAUTHCOMPANYGUID() { return r.get("AUTHCOMPANYGUID"); }
+            public String getPRODUCTGUID() { return r.get("PRODUCTGUID"); }
+        }
+        List<AsAuthProductRepository.Projection> products = productsRows.stream()
+                .map(m -> new ProductProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> productPagesRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap p) USE_NL(ap p) */ p.AUTHPRODUCTPAGEGUID, p.AUTHPRODUCTGUID, p.AUTHPAGEGUID " +
+            "from ASAUTHPRODUCTPAGE p " +
+            "join ASAUTHPRODUCT ap on p.AUTHPRODUCTGUID = ap.AUTHPRODUCTGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class ProductPageProjection implements AsAuthProductPageRepository.Projection {
+            private final Row r;
+            ProductPageProjection(Row r) { this.r = r; }
+            public String getAUTHPRODUCTPAGEGUID() { return r.get("AUTHPRODUCTPAGEGUID"); }
+            public String getAUTHPRODUCTGUID() { return r.get("AUTHPRODUCTGUID"); }
+            public String getAUTHPAGEGUID() { return r.get("AUTHPAGEGUID"); }
+        }
+        List<AsAuthProductPageRepository.Projection> productPages = productPagesRows.stream()
+                .map(m -> new ProductPageProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> productPageButtonsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap p b) USE_NL(ap p b) */ b.AUTHPRODUCTPAGEGUID, b.AUTHBUTTONGUID " +
+            "from ASAUTHPRODUCTPAGEBUTTON b " +
+            "join ASAUTHPRODUCTPAGE p on b.AUTHPRODUCTPAGEGUID = p.AUTHPRODUCTPAGEGUID " +
+            "join ASAUTHPRODUCT ap on p.AUTHPRODUCTGUID = ap.AUTHPRODUCTGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class ProductPageButtonProjection implements AsAuthProductPageButtonRepository.Projection {
+            private final Row r;
+            ProductPageButtonProjection(Row r) { this.r = r; }
+            public String getAUTHPRODUCTPAGEGUID() { return r.get("AUTHPRODUCTPAGEGUID"); }
+            public String getAUTHBUTTONGUID() { return r.get("AUTHBUTTONGUID"); }
+        }
+        List<AsAuthProductPageButtonRepository.Projection> productPageButtons = productPageButtonsRows.stream()
+                .map(m -> new ProductPageButtonProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> productTransactionsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap t) USE_NL(ap t) */ t.AUTHPRODUCTTRANSACTIONGUID, t.AUTHPRODUCTGUID, t.TRANSACTIONGUID " +
+            "from ASAUTHPRODUCTTRANSACTION t " +
+            "join ASAUTHPRODUCT ap on t.AUTHPRODUCTGUID = ap.AUTHPRODUCTGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class ProductTransactionProjection implements AsAuthProductTransactionRepository.Projection {
+            private final Row r;
+            ProductTransactionProjection(Row r) { this.r = r; }
+            public String getAUTHPRODUCTTRANSACTIONGUID() { return r.get("AUTHPRODUCTTRANSACTIONGUID"); }
+            public String getAUTHPRODUCTGUID() { return r.get("AUTHPRODUCTGUID"); }
+            public String getTRANSACTIONGUID() { return r.get("TRANSACTIONGUID"); }
+        }
+        List<AsAuthProductTransactionRepository.Projection> productTransactions = productTransactionsRows.stream()
+                .map(m -> new ProductTransactionProjection(new Row(m))).collect(Collectors.toList());
+
+        List<Map<String, Object>> productTransactionButtonsRows = jdbc.queryForList(
+            "select /*+ LEADING(c ap t b) USE_NL(ap t b) */ b.AUTHPRODUCTTRANSACTIONGUID, b.AUTHBUTTONGUID " +
+            "from ASAUTHPRODUCTTRANSACTIONBUTTON b " +
+            "join ASAUTHPRODUCTTRANSACTION t on b.AUTHPRODUCTTRANSACTIONGUID = t.AUTHPRODUCTTRANSACTIONGUID " +
+            "join ASAUTHPRODUCT ap on t.AUTHPRODUCTGUID = ap.AUTHPRODUCTGUID " +
+            "join ASAUTHCOMPANY c on ap.AUTHCOMPANYGUID = c.AUTHCOMPANYGUID " +
+            "where c.SECURITYGROUPGUID = ?",
+            securityGroupGuid
+        );
+        class ProductTransactionButtonProjection implements AsAuthProductTransactionButtonRepository.Projection {
+            private final Row r;
+            ProductTransactionButtonProjection(Row r) { this.r = r; }
+            public String getAUTHPRODUCTTRANSACTIONGUID() { return r.get("AUTHPRODUCTTRANSACTIONGUID"); }
+            public String getAUTHBUTTONGUID() { return r.get("AUTHBUTTONGUID"); }
+        }
+        List<AsAuthProductTransactionButtonRepository.Projection> productTransactionButtons = productTransactionButtonsRows.stream()
+                .map(m -> new ProductTransactionButtonProjection(new Row(m))).collect(Collectors.toList());
+
+        // ── Pre-build lookup maps for parent/child mapping ────────────────
+        Map<String, String> authCompanyToCompanyGuidMap = companies.stream()
+                .filter(ac -> ac.getAUTHCOMPANYGUID() != null && ac.getCOMPANYGUID() != null)
+                .collect(Collectors.toMap(
+                        ac -> ac.getAUTHCOMPANYGUID().trim(),
+                        ac -> ac.getCOMPANYGUID().trim()
+                ));
+
+        Map<String, String> companyPageToCompanyGuidMap = companyPages.stream()
+                .filter(p -> p.getAUTHCOMPANYPAGEGUID() != null && p.getAUTHCOMPANYGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthCompanyPageRepository.Projection::getAUTHCOMPANYPAGEGUID,
+                        p -> authCompanyToCompanyGuidMap.getOrDefault(p.getAUTHCOMPANYGUID(), "")
+                ));
+
+        Map<String, String> authPlanToCompanyGuidMap = plans.stream()
+                .filter(p -> p.getAUTHPLANGUID() != null && p.getAUTHCOMPANYGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthPlanRepository.Projection::getAUTHPLANGUID,
+                        p -> authCompanyToCompanyGuidMap.getOrDefault(p.getAUTHCOMPANYGUID(), "")
+                ));
+
+        Map<String, String> authPlanToPlanGuidMap = plans.stream()
+                .filter(p -> p.getAUTHPLANGUID() != null && p.getPLANGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthPlanRepository.Projection::getAUTHPLANGUID,
+                        AsAuthPlanRepository.Projection::getPLANGUID
+                ));
+
+        Map<String, String> planPageToCompanyGuidMap = planPages.stream()
+                .filter(p -> p.getAUTHPLANPAGEGUID() != null && p.getAUTHPLANGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthPlanPageRepository.Projection::getAUTHPLANPAGEGUID,
+                        p -> authPlanToCompanyGuidMap.getOrDefault(p.getAUTHPLANGUID(), "")
+                ));
+
+        Map<String, String> planPageToPlanGuidMap = planPages.stream()
+                .filter(p -> p.getAUTHPLANPAGEGUID() != null && p.getAUTHPLANGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthPlanPageRepository.Projection::getAUTHPLANPAGEGUID,
+                        p -> authPlanToPlanGuidMap.getOrDefault(p.getAUTHPLANGUID(), "")
+                ));
+
+        Map<String, String> authTransactionToCompanyGuidMap = transactions.stream()
+                .filter(t -> t.getAUTHTRANSACTIONGUID() != null && t.getAUTHPLANGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthTransactionRepository.Projection::getAUTHTRANSACTIONGUID,
+                        t -> authPlanToCompanyGuidMap.getOrDefault(t.getAUTHPLANGUID(), "")
+                ));
+
+        Map<String, String> authTransactionToPlanGuidMap = transactions.stream()
+                .filter(t -> t.getAUTHTRANSACTIONGUID() != null && t.getAUTHPLANGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthTransactionRepository.Projection::getAUTHTRANSACTIONGUID,
+                        t -> authPlanToPlanGuidMap.getOrDefault(t.getAUTHPLANGUID(), "")
+                ));
+
+        Map<String, String> authProductToCompanyGuidMap = products.stream()
+                .filter(p -> p.getAUTHPRODUCTGUID() != null && p.getAUTHCOMPANYGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductRepository.Projection::getAUTHPRODUCTGUID,
+                        p -> authCompanyToCompanyGuidMap.getOrDefault(p.getAUTHCOMPANYGUID(), "")
+                ));
+
+        Map<String, String> authProductToProductGuidMap = products.stream()
+                .filter(p -> p.getAUTHPRODUCTGUID() != null && p.getPRODUCTGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductRepository.Projection::getAUTHPRODUCTGUID,
+                        AsAuthProductRepository.Projection::getPRODUCTGUID
+                ));
+
+        Map<String, String> productPageToCompanyGuidMap = productPages.stream()
+                .filter(p -> p.getAUTHPRODUCTPAGEGUID() != null && p.getAUTHPRODUCTGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductPageRepository.Projection::getAUTHPRODUCTPAGEGUID,
+                        p -> authProductToCompanyGuidMap.getOrDefault(p.getAUTHPRODUCTGUID(), "")
+                ));
+
+        Map<String, String> productPageToProductGuidMap = productPages.stream()
+                .filter(p -> p.getAUTHPRODUCTPAGEGUID() != null && p.getAUTHPRODUCTGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductPageRepository.Projection::getAUTHPRODUCTPAGEGUID,
+                        p -> authProductToProductGuidMap.getOrDefault(p.getAUTHPRODUCTGUID(), "")
+                ));
+
+        Map<String, String> productTransactionToCompanyGuidMap = productTransactions.stream()
+                .filter(t -> t.getAUTHPRODUCTTRANSACTIONGUID() != null && t.getAUTHPRODUCTGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductTransactionRepository.Projection::getAUTHPRODUCTTRANSACTIONGUID,
+                        t -> authProductToCompanyGuidMap.getOrDefault(t.getAUTHPRODUCTGUID(), "")
+                ));
+
+        Map<String, String> productTransactionToProductGuidMap = productTransactions.stream()
+                .filter(t -> t.getAUTHPRODUCTTRANSACTIONGUID() != null && t.getAUTHPRODUCTGUID() != null)
+                .collect(Collectors.toMap(
+                        AsAuthProductTransactionRepository.Projection::getAUTHPRODUCTTRANSACTIONGUID,
+                        t -> authProductToProductGuidMap.getOrDefault(t.getAUTHPRODUCTGUID(), "")
+                ));
 
         // ── Pre-group flat lists into maps to achieve O(1) lookups inside loops ──
-        Map<String, List<AsAuthCompanyPage>> companyPagesMap = companyPages.stream()
-                .filter(p -> p.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthCompanyPage::getCOMPANYGUID));
+        Map<String, List<AsAuthCompanyPageRepository.Projection>> companyPagesMap = companyPages.stream()
+                .filter(p -> authCompanyToCompanyGuidMap.get(p.getAUTHCOMPANYGUID()) != null)
+                .collect(Collectors.groupingBy(p -> authCompanyToCompanyGuidMap.get(p.getAUTHCOMPANYGUID())));
 
-        Map<String, List<AsAuthCompanyPageButton>> companyPageButtonsMap = companyPageButtons.stream()
-                .filter(b -> b.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthCompanyPageButton::getCOMPANYGUID));
+        Map<String, List<AsAuthCompanyPageButtonRepository.Projection>> companyPageButtonsMap = companyPageButtons.stream()
+                .filter(b -> companyPageToCompanyGuidMap.get(b.getAUTHCOMPANYPAGEGUID()) != null)
+                .collect(Collectors.groupingBy(b -> companyPageToCompanyGuidMap.get(b.getAUTHCOMPANYPAGEGUID())));
 
-        Map<String, List<AsAuthCompanyInquiry>> companyInquiriesMap = companyInquiries.stream()
-                .filter(i -> i.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthCompanyInquiry::getCOMPANYGUID));
+        Map<String, List<AsAuthCompanyInquiryRepository.Projection>> companyInquiriesMap = companyInquiries.stream()
+                .filter(i -> authCompanyToCompanyGuidMap.get(i.getAUTHCOMPANYGUID()) != null)
+                .collect(Collectors.groupingBy(i -> authCompanyToCompanyGuidMap.get(i.getAUTHCOMPANYGUID())));
 
-        Map<String, List<AsAuthCompanyWebService>> companyWebServicesMap = companyWebServices.stream()
-                .filter(w -> w.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthCompanyWebService::getCOMPANYGUID));
+        Map<String, List<AsAuthCompanyWebServiceRepository.Projection>> companyWebServicesMap = companyWebServices.stream()
+                .filter(w -> authCompanyToCompanyGuidMap.get(w.getAUTHCOMPANYGUID()) != null)
+                .collect(Collectors.groupingBy(w -> authCompanyToCompanyGuidMap.get(w.getAUTHCOMPANYGUID())));
 
-        Map<String, List<AsAuthPlan>> plansMap = plans.stream()
-                .filter(p -> p.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthPlan::getCOMPANYGUID));
+        Map<String, List<AsAuthPlanRepository.Projection>> plansMap = plans.stream()
+                .filter(p -> authCompanyToCompanyGuidMap.get(p.getAUTHCOMPANYGUID()) != null)
+                .collect(Collectors.groupingBy(p -> authCompanyToCompanyGuidMap.get(p.getAUTHCOMPANYGUID())));
 
-        Map<String, List<AsAuthPlanPage>> planPagesMap = planPages.stream()
-                .filter(pp -> pp.getCOMPANYGUID() != null && pp.getPLANGUID() != null)
-                .collect(Collectors.groupingBy(pp -> pp.getCOMPANYGUID() + "|" + pp.getPLANGUID()));
+        Map<String, List<AsAuthPlanPageRepository.Projection>> planPagesMap = planPages.stream()
+                .filter(pp -> authPlanToCompanyGuidMap.get(pp.getAUTHPLANGUID()) != null && authPlanToPlanGuidMap.get(pp.getAUTHPLANGUID()) != null)
+                .collect(Collectors.groupingBy(pp -> authPlanToCompanyGuidMap.get(pp.getAUTHPLANGUID()) + "|" + authPlanToPlanGuidMap.get(pp.getAUTHPLANGUID())));
 
-        Map<String, List<AsAuthPlanPageButton>> planPageButtonsMap = planPageButtons.stream()
-                .filter(pb -> pb.getCOMPANYGUID() != null && pb.getPLANGUID() != null)
-                .collect(Collectors.groupingBy(pb -> pb.getCOMPANYGUID() + "|" + pb.getPLANGUID()));
+        Map<String, List<AsAuthPlanPageButtonRepository.Projection>> planPageButtonsMap = planPageButtons.stream()
+                .filter(pb -> planPageToCompanyGuidMap.get(pb.getAUTHPLANPAGEGUID()) != null && planPageToPlanGuidMap.get(pb.getAUTHPLANPAGEGUID()) != null)
+                .collect(Collectors.groupingBy(pb -> planPageToCompanyGuidMap.get(pb.getAUTHPLANPAGEGUID()) + "|" + planPageToPlanGuidMap.get(pb.getAUTHPLANPAGEGUID())));
 
-        Map<String, List<AsAuthTransaction>> transactionsMap = transactions.stream()
-                .filter(t -> t.getCOMPANYGUID() != null && t.getPLANGUID() != null)
-                .collect(Collectors.groupingBy(t -> t.getCOMPANYGUID() + "|" + t.getPLANGUID()));
+        Map<String, List<AsAuthTransactionRepository.Projection>> transactionsMap = transactions.stream()
+                .filter(t -> authPlanToCompanyGuidMap.get(t.getAUTHPLANGUID()) != null && authPlanToPlanGuidMap.get(t.getAUTHPLANGUID()) != null)
+                .collect(Collectors.groupingBy(t -> authPlanToCompanyGuidMap.get(t.getAUTHPLANGUID()) + "|" + authPlanToPlanGuidMap.get(t.getAUTHPLANGUID())));
 
-        Map<String, List<AsAuthTransactionButton>> transactionButtonsMap = transactionButtons.stream()
+        Map<String, List<AsAuthTransactionButtonRepository.Projection>> transactionButtonsMap = transactionButtons.stream()
                 .filter(b -> b.getAUTHTRANSACTIONGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthTransactionButton::getAUTHTRANSACTIONGUID));
+                .collect(Collectors.groupingBy(AsAuthTransactionButtonRepository.Projection::getAUTHTRANSACTIONGUID));
 
-        Map<String, List<AsAuthPlanInquiry>> planInquiriesMap = planInquiries.stream()
-                .filter(pi -> pi.getCOMPANYGUID() != null && pi.getPLANGUID() != null)
-                .collect(Collectors.groupingBy(pi -> pi.getCOMPANYGUID() + "|" + pi.getPLANGUID()));
+        Map<String, List<AsAuthPlanInquiryRepository.Projection>> planInquiriesMap = planInquiries.stream()
+                .filter(pi -> authPlanToCompanyGuidMap.get(pi.getAUTHPLANGUID()) != null && authPlanToPlanGuidMap.get(pi.getAUTHPLANGUID()) != null)
+                .collect(Collectors.groupingBy(pi -> authPlanToCompanyGuidMap.get(pi.getAUTHPLANGUID()) + "|" + authPlanToPlanGuidMap.get(pi.getAUTHPLANGUID())));
 
-        Map<String, List<AsAuthProduct>> productsMap = products.stream()
-                .filter(pr -> pr.getCOMPANYGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthProduct::getCOMPANYGUID));
+        Map<String, List<AsAuthProductRepository.Projection>> productsMap = products.stream()
+                .filter(pr -> authCompanyToCompanyGuidMap.get(pr.getAUTHCOMPANYGUID()) != null)
+                .collect(Collectors.groupingBy(pr -> authCompanyToCompanyGuidMap.get(pr.getAUTHCOMPANYGUID())));
 
-        Map<String, List<AsAuthProductPage>> productPagesMap = productPages.stream()
-                .filter(pp -> pp.getCOMPANYGUID() != null && pp.getPRODUCTGUID() != null)
-                .collect(Collectors.groupingBy(pp -> pp.getCOMPANYGUID() + "|" + pp.getPRODUCTGUID()));
+        Map<String, List<AsAuthProductPageRepository.Projection>> productPagesMap = productPages.stream()
+                .filter(pp -> authProductToCompanyGuidMap.get(pp.getAUTHPRODUCTGUID()) != null && authProductToProductGuidMap.get(pp.getAUTHPRODUCTGUID()) != null)
+                .collect(Collectors.groupingBy(pp -> authProductToCompanyGuidMap.get(pp.getAUTHPRODUCTGUID()) + "|" + authProductToProductGuidMap.get(pp.getAUTHPRODUCTGUID())));
 
-        Map<String, List<AsAuthProductPageButton>> productPageButtonsMap = productPageButtons.stream()
-                .filter(pb -> pb.getCOMPANYGUID() != null && pb.getPRODUCTGUID() != null)
-                .collect(Collectors.groupingBy(pb -> pb.getCOMPANYGUID() + "|" + pb.getPRODUCTGUID()));
+        Map<String, List<AsAuthProductPageButtonRepository.Projection>> productPageButtonsMap = productPageButtons.stream()
+                .filter(pb -> productPageToCompanyGuidMap.get(pb.getAUTHPRODUCTPAGEGUID()) != null && productPageToProductGuidMap.get(pb.getAUTHPRODUCTPAGEGUID()) != null)
+                .collect(Collectors.groupingBy(pb -> productPageToCompanyGuidMap.get(pb.getAUTHPRODUCTPAGEGUID()) + "|" + productPageToProductGuidMap.get(pb.getAUTHPRODUCTPAGEGUID())));
 
-        Map<String, List<AsAuthProductTransaction>> productTransactionsMap = productTransactions.stream()
-                .filter(t -> t.getCOMPANYGUID() != null && t.getPRODUCTGUID() != null)
-                .collect(Collectors.groupingBy(t -> t.getCOMPANYGUID() + "|" + t.getPRODUCTGUID()));
+        Map<String, List<AsAuthProductTransactionRepository.Projection>> productTransactionsMap = productTransactions.stream()
+                .filter(t -> authProductToCompanyGuidMap.get(t.getAUTHPRODUCTGUID()) != null && authProductToProductGuidMap.get(t.getAUTHPRODUCTGUID()) != null)
+                .collect(Collectors.groupingBy(t -> authProductToCompanyGuidMap.get(t.getAUTHPRODUCTGUID()) + "|" + authProductToProductGuidMap.get(t.getAUTHPRODUCTGUID())));
 
-        Map<String, List<AsAuthProductTransactionButton>> productTransactionButtonsMap = productTransactionButtons.stream()
+        Map<String, List<AsAuthProductTransactionButtonRepository.Projection>> productTransactionButtonsMap = productTransactionButtons.stream()
                 .filter(b -> b.getAUTHPRODUCTTRANSACTIONGUID() != null)
-                .collect(Collectors.groupingBy(AsAuthProductTransactionButton::getAUTHPRODUCTTRANSACTIONGUID));
+                .collect(Collectors.groupingBy(AsAuthProductTransactionButtonRepository.Projection::getAUTHPRODUCTTRANSACTIONGUID));
 
         // ── Assemble nested structure per company ───────────────────────
         List<CompanyAuthDto> companyDtos = new ArrayList<>();
@@ -304,12 +671,12 @@ public class SecurityGroupService {
 
             // Company Pages → Buttons
             Map<String, PageDto> pageMap = new LinkedHashMap<>();
-            List<AsAuthCompanyPage> cPages = companyPagesMap.getOrDefault(cGuid, Collections.emptyList());
-            for (AsAuthCompanyPage p : cPages) {
+            List<AsAuthCompanyPageRepository.Projection> cPages = companyPagesMap.getOrDefault(cGuid, Collections.emptyList());
+            for (AsAuthCompanyPageRepository.Projection p : cPages) {
                 pageMap.computeIfAbsent(p.getAUTHCOMPANYPAGEGUID(), k -> new PageDto(p.getAUTHPAGEGUID()));
             }
-            List<AsAuthCompanyPageButton> cPageButtons = companyPageButtonsMap.getOrDefault(cGuid, Collections.emptyList());
-            for (AsAuthCompanyPageButton b : cPageButtons) {
+            List<AsAuthCompanyPageButtonRepository.Projection> cPageButtons = companyPageButtonsMap.getOrDefault(cGuid, Collections.emptyList());
+            for (AsAuthCompanyPageButtonRepository.Projection b : cPageButtons) {
                 PageDto page = pageMap.get(b.getAUTHCOMPANYPAGEGUID());
                 if (page != null) {
                     page.getButtons().add(new ButtonDto(b.getAUTHBUTTONGUID()));
@@ -318,7 +685,7 @@ public class SecurityGroupService {
             cDto.setCompanyPages(new ArrayList<>(pageMap.values()));
 
             // Company Inquiries
-            List<AsAuthCompanyInquiry> cInquiries = companyInquiriesMap.getOrDefault(cGuid, Collections.emptyList());
+            List<AsAuthCompanyInquiryRepository.Projection> cInquiries = companyInquiriesMap.getOrDefault(cGuid, Collections.emptyList());
             cDto.setCompanyInquiries(
                 cInquiries.stream()
                     .map(i -> new InquiryDto(i.getINQUIRYSCREENGUID()))
@@ -326,7 +693,7 @@ public class SecurityGroupService {
             );
 
             // Company Web Services
-            List<AsAuthCompanyWebService> cWebServices = companyWebServicesMap.getOrDefault(cGuid, Collections.emptyList());
+            List<AsAuthCompanyWebServiceRepository.Projection> cWebServices = companyWebServicesMap.getOrDefault(cGuid, Collections.emptyList());
             cDto.setCompanyWebServices(
                 cWebServices.stream()
                     .map(w -> new WebServiceDto(w.getAUTHWEBSERVICEGUID()))
@@ -335,20 +702,20 @@ public class SecurityGroupService {
 
             // ── Plans ───────────────────────────────────────────────────
             List<PlanAuthDto> planDtos = new ArrayList<>();
-            List<AsAuthPlan> cPlans = plansMap.getOrDefault(cGuid, Collections.emptyList());
-            for (AsAuthPlan plan : cPlans) {
+            List<AsAuthPlanRepository.Projection> cPlans = plansMap.getOrDefault(cGuid, Collections.emptyList());
+            for (AsAuthPlanRepository.Projection plan : cPlans) {
                 String pGuid = plan.getPLANGUID();
                 PlanAuthDto planDto = new PlanAuthDto(pGuid);
                 String planKey = cGuid + "|" + pGuid;
 
                 // Plan Pages → Buttons
                 Map<String, PageDto> planPageMap = new LinkedHashMap<>();
-                List<AsAuthPlanPage> pPages = planPagesMap.getOrDefault(planKey, Collections.emptyList());
-                for (AsAuthPlanPage pp : pPages) {
+                List<AsAuthPlanPageRepository.Projection> pPages = planPagesMap.getOrDefault(planKey, Collections.emptyList());
+                for (AsAuthPlanPageRepository.Projection pp : pPages) {
                     planPageMap.computeIfAbsent(pp.getAUTHPLANPAGEGUID(), k -> new PageDto(pp.getAUTHPAGEGUID()));
                 }
-                List<AsAuthPlanPageButton> pPageButtons = planPageButtonsMap.getOrDefault(planKey, Collections.emptyList());
-                for (AsAuthPlanPageButton pb : pPageButtons) {
+                List<AsAuthPlanPageButtonRepository.Projection> pPageButtons = planPageButtonsMap.getOrDefault(planKey, Collections.emptyList());
+                for (AsAuthPlanPageButtonRepository.Projection pb : pPageButtons) {
                     PageDto page = planPageMap.get(pb.getAUTHPLANPAGEGUID());
                     if (page != null) {
                         page.getButtons().add(new ButtonDto(pb.getAUTHBUTTONGUID()));
@@ -357,11 +724,11 @@ public class SecurityGroupService {
                 planDto.setPlanPages(new ArrayList<>(planPageMap.values()));
 
                 // Plan Transactions
-                List<AsAuthTransaction> pTransactions = transactionsMap.getOrDefault(planKey, Collections.emptyList());
+                List<AsAuthTransactionRepository.Projection> pTransactions = transactionsMap.getOrDefault(planKey, Collections.emptyList());
                 List<TransactionDto> pTxnDtos = new ArrayList<>();
-                for (AsAuthTransaction t : pTransactions) {
+                for (AsAuthTransactionRepository.Projection t : pTransactions) {
                     TransactionDto tDto = new TransactionDto(t.getTRANSACTIONGUID());
-                    List<AsAuthTransactionButton> buttons = transactionButtonsMap.getOrDefault(t.getAUTHTRANSACTIONGUID(), Collections.emptyList());
+                    List<AsAuthTransactionButtonRepository.Projection> buttons = transactionButtonsMap.getOrDefault(t.getAUTHTRANSACTIONGUID(), Collections.emptyList());
                     tDto.setButtons(buttons.stream()
                         .map(b -> new ButtonDto(b.getAUTHBUTTONGUID()))
                         .collect(Collectors.toList())
@@ -371,7 +738,7 @@ public class SecurityGroupService {
                 planDto.setPlanTransactions(pTxnDtos);
 
                 // Plan Inquiries
-                List<AsAuthPlanInquiry> pInquiries = planInquiriesMap.getOrDefault(planKey, Collections.emptyList());
+                List<AsAuthPlanInquiryRepository.Projection> pInquiries = planInquiriesMap.getOrDefault(planKey, Collections.emptyList());
                 planDto.setPlanInquiries(
                     pInquiries.stream()
                         .map(pi -> new InquiryDto(pi.getINQUIRYSCREENGUID()))
@@ -384,20 +751,20 @@ public class SecurityGroupService {
 
             // ── Products ────────────────────────────────────────────────
             List<ProductAuthDto> productDtos = new ArrayList<>();
-            List<AsAuthProduct> cProducts = productsMap.getOrDefault(cGuid, Collections.emptyList());
-            for (AsAuthProduct prod : cProducts) {
+            List<AsAuthProductRepository.Projection> cProducts = productsMap.getOrDefault(cGuid, Collections.emptyList());
+            for (AsAuthProductRepository.Projection prod : cProducts) {
                 String prGuid = prod.getPRODUCTGUID();
                 ProductAuthDto prodDto = new ProductAuthDto(prGuid);
                 String productKey = cGuid + "|" + prGuid;
 
                 // Product Pages → Buttons
                 Map<String, PageDto> prodPageMap = new LinkedHashMap<>();
-                List<AsAuthProductPage> prPages = productPagesMap.getOrDefault(productKey, Collections.emptyList());
-                for (AsAuthProductPage pp : prPages) {
+                List<AsAuthProductPageRepository.Projection> prPages = productPagesMap.getOrDefault(productKey, Collections.emptyList());
+                for (AsAuthProductPageRepository.Projection pp : prPages) {
                     prodPageMap.computeIfAbsent(pp.getAUTHPRODUCTPAGEGUID(), k -> new PageDto(pp.getAUTHPAGEGUID()));
                 }
-                List<AsAuthProductPageButton> prPageButtons = productPageButtonsMap.getOrDefault(productKey, Collections.emptyList());
-                for (AsAuthProductPageButton pb : prPageButtons) {
+                List<AsAuthProductPageButtonRepository.Projection> prPageButtons = productPageButtonsMap.getOrDefault(productKey, Collections.emptyList());
+                for (AsAuthProductPageButtonRepository.Projection pb : prPageButtons) {
                     PageDto page = prodPageMap.get(pb.getAUTHPRODUCTPAGEGUID());
                     if (page != null) {
                         page.getButtons().add(new ButtonDto(pb.getAUTHBUTTONGUID()));
@@ -406,11 +773,11 @@ public class SecurityGroupService {
                 prodDto.setProductPages(new ArrayList<>(prodPageMap.values()));
 
                 // Product Transactions
-                List<AsAuthProductTransaction> prTransactions = productTransactionsMap.getOrDefault(productKey, Collections.emptyList());
+                List<AsAuthProductTransactionRepository.Projection> prTransactions = productTransactionsMap.getOrDefault(productKey, Collections.emptyList());
                 List<TransactionDto> prTxnDtos = new ArrayList<>();
-                for (AsAuthProductTransaction t : prTransactions) {
+                for (AsAuthProductTransactionRepository.Projection t : prTransactions) {
                     TransactionDto tDto = new TransactionDto(t.getTRANSACTIONGUID());
-                    List<AsAuthProductTransactionButton> buttons = productTransactionButtonsMap.getOrDefault(t.getAUTHPRODUCTTRANSACTIONGUID(), Collections.emptyList());
+                    List<AsAuthProductTransactionButtonRepository.Projection> buttons = productTransactionButtonsMap.getOrDefault(t.getAUTHPRODUCTTRANSACTIONGUID(), Collections.emptyList());
                     tDto.setButtons(buttons.stream()
                         .map(b -> new ButtonDto(b.getAUTHBUTTONGUID()))
                         .collect(Collectors.toList())
@@ -682,7 +1049,7 @@ public class SecurityGroupService {
             String[] p = k.split("\\|");
             String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPLAN (AUTHPLANGUID, COMPANYGUID, PLANGUID) SELECT '%s', AUTHCOMPANYGUID, '%s' FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s';",
+                "INSERT INTO ASAUTHPLAN (AUTHPLANGUID, AUTHCOMPANYGUID, PLANGUID) SELECT '%s', AUTHCOMPANYGUID, '%s' FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s';",
                 esc(newGuid), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Plan pages
@@ -696,10 +1063,9 @@ public class SecurityGroupService {
         // Plan page buttons
         diff(incomingPlanPageButtonKeys, existingPlanPageButtonKeys).forEach(k -> {
             String[] p = k.split("\\|");
-            String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPLANPAGEBUTTON (AUTHPLANPAGEBUTTONGUID, AUTHPLANPAGEGUID, AUTHBUTTONGUID) SELECT '%s', AUTHPLANPAGEGUID, '%s' FROM ASAUTHPLANPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPLANGUID IN (SELECT AUTHPLANGUID FROM ASAUTHPLAN WHERE PLANGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
-                esc(newGuid), esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
+                "INSERT INTO ASAUTHPLANPAGEBUTTON (AUTHPLANPAGEGUID, AUTHBUTTONGUID) SELECT AUTHPLANPAGEGUID, '%s' FROM ASAUTHPLANPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPLANGUID IN (SELECT AUTHPLANGUID FROM ASAUTHPLAN WHERE PLANGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
+                esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Plan transactions
         diff(incomingTransactionKeys, existingTransactionKeys).forEach(k -> {
@@ -736,10 +1102,9 @@ public class SecurityGroupService {
         // Product page buttons
         diff(incomingProductPageButtonKeys, existingProductPageButtonKeys).forEach(k -> {
             String[] p = k.split("\\|");
-            String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPRODUCTPAGEBUTTON (AUTHPRODUCTPAGEBUTTONGUID, AUTHPRODUCTPAGEGUID, AUTHBUTTONGUID) SELECT '%s', AUTHPRODUCTPAGEGUID, '%s' FROM ASAUTHPRODUCTPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPRODUCTGUID IN (SELECT AUTHPRODUCTGUID FROM ASAUTHPRODUCT WHERE PRODUCTGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
-                esc(newGuid), esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
+                "INSERT INTO ASAUTHPRODUCTPAGEBUTTON (AUTHPRODUCTPAGEGUID, AUTHBUTTONGUID) SELECT AUTHPRODUCTPAGEGUID, '%s' FROM ASAUTHPRODUCTPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPRODUCTGUID IN (SELECT AUTHPRODUCTGUID FROM ASAUTHPRODUCT WHERE PRODUCTGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
+                esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Product transactions
         diff(incomingProductTransactionKeys, existingProductTransactionKeys).forEach(k -> {
@@ -976,9 +1341,77 @@ public class SecurityGroupService {
 
     // ── Utility ─────────────────────────────────────────────────────────
 
+    /**
+     * Helper to batch collection queries in maximum chunks of 1000 to prevent Oracle ORA-01795 error.
+     */
+    private <T> List<T> fetchInChunks(Collection<String> keys, java.util.function.Function<Collection<String>, List<T>> fetcher) {
+        if (keys == null || keys.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> list = new ArrayList<>(keys);
+        List<T> results = new ArrayList<>();
+        int limit = 1000;
+        for (int i = 0; i < list.size(); i += limit) {
+            List<String> chunk = list.subList(i, Math.min(i + limit, list.size()));
+            results.addAll(fetcher.apply(chunk));
+        }
+        return results;
+    }
+
     /** Set difference: elements in {@code a} that are NOT in {@code b}. */
     private List<String> diff(Set<String> a, Set<String> b) {
         return a.stream().filter(k -> !b.contains(k)).collect(Collectors.toList());
+    }
+
+    /** Execute generated delta SQL scripts on secondaryDev database. */
+    @Transactional(value = "secondaryDevTransactionManager")
+    public void executeScripts(List<String> scripts) {
+        if (scripts == null || scripts.isEmpty()) {
+            return;
+        }
+        JdbcTemplate jdbc = new JdbcTemplate(secondaryDevDataSource);
+        List<String> batch = new ArrayList<>();
+        int batchSize = 200;
+        int batchCount = 0;
+        int totalExecuted = 0;
+        System.out.println("Starting execution of " + scripts.size() + " scripts with batch size " + batchSize);
+        long startTime = System.currentTimeMillis();
+        for (String script : scripts) {
+            if (script == null) continue;
+            String trimmed = script.trim();
+            // Skip comments and empty lines
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) {
+                continue;
+            }
+            // Strip trailing semicolon if present
+            if (trimmed.endsWith(";")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+            }
+            if (!trimmed.isEmpty()) {
+                batch.add(trimmed);
+                if (batch.size() >= batchSize) {
+                    batchCount++;
+                    totalExecuted += batch.size();
+                    System.out.println("Executing batch #" + batchCount + " (" + batch.size() + " statements, total executed: " + totalExecuted + ")...");
+                    long startBatch = System.currentTimeMillis();
+                    jdbc.batchUpdate(batch.toArray(new String[0]));
+                    long endBatch = System.currentTimeMillis();
+                    System.out.println("Batch #" + batchCount + " executed in " + (endBatch - startBatch) + " ms.");
+                    batch.clear();
+                }
+            }
+        }
+        if (!batch.isEmpty()) {
+            batchCount++;
+            totalExecuted += batch.size();
+            System.out.println("Executing final batch #" + batchCount + " (" + batch.size() + " statements, total executed: " + totalExecuted + ")...");
+            long startBatch = System.currentTimeMillis();
+            jdbc.batchUpdate(batch.toArray(new String[0]));
+            long endBatch = System.currentTimeMillis();
+            System.out.println("Final batch #" + batchCount + " executed in " + (endBatch - startBatch) + " ms.");
+        }
+        long endTime = System.currentTimeMillis();
+        System.out.println("Total script execution finished in " + (endTime - startTime) + " ms.");
     }
 
     /** Escape single quotes for safe SQL string literals. */
@@ -987,3 +1420,4 @@ public class SecurityGroupService {
         return value.replace("'", "''");
     }
 }
+
