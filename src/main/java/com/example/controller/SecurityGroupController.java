@@ -172,4 +172,15 @@ public class SecurityGroupController {
         GenerateScriptsResponseDto response = securityGroupService.generateScripts(request.getSecurityGroup());
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Execute delta SQL scripts on secondaryDev database.
+     */
+    @PostMapping({"/security-group/execute-scripts", "/security-groups/execute-scripts"})
+    public ResponseEntity<Void> executeScripts(
+            @RequestBody List<String> scripts) {
+        securityGroupService.executeScripts(scripts);
+        return ResponseEntity.ok().build();
+    }
 }
+

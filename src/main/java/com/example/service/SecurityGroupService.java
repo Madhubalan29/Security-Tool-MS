@@ -1049,7 +1049,7 @@ public class SecurityGroupService {
             String[] p = k.split("\\|");
             String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPLAN (AUTHPLANGUID, COMPANYGUID, PLANGUID) SELECT '%s', AUTHCOMPANYGUID, '%s' FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s';",
+                "INSERT INTO ASAUTHPLAN (AUTHPLANGUID, AUTHCOMPANYGUID, PLANGUID) SELECT '%s', AUTHCOMPANYGUID, '%s' FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s';",
                 esc(newGuid), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Plan pages
@@ -1063,10 +1063,9 @@ public class SecurityGroupService {
         // Plan page buttons
         diff(incomingPlanPageButtonKeys, existingPlanPageButtonKeys).forEach(k -> {
             String[] p = k.split("\\|");
-            String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPLANPAGEBUTTON (AUTHPLANPAGEBUTTONGUID, AUTHPLANPAGEGUID, AUTHBUTTONGUID) SELECT '%s', AUTHPLANPAGEGUID, '%s' FROM ASAUTHPLANPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPLANGUID IN (SELECT AUTHPLANGUID FROM ASAUTHPLAN WHERE PLANGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
-                esc(newGuid), esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
+                "INSERT INTO ASAUTHPLANPAGEBUTTON (AUTHPLANPAGEGUID, AUTHBUTTONGUID) SELECT AUTHPLANPAGEGUID, '%s' FROM ASAUTHPLANPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPLANGUID IN (SELECT AUTHPLANGUID FROM ASAUTHPLAN WHERE PLANGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
+                esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Plan transactions
         diff(incomingTransactionKeys, existingTransactionKeys).forEach(k -> {
@@ -1103,10 +1102,9 @@ public class SecurityGroupService {
         // Product page buttons
         diff(incomingProductPageButtonKeys, existingProductPageButtonKeys).forEach(k -> {
             String[] p = k.split("\\|");
-            String newGuid = java.util.UUID.randomUUID().toString().toUpperCase();
             scripts.add(String.format(
-                "INSERT INTO ASAUTHPRODUCTPAGEBUTTON (AUTHPRODUCTPAGEBUTTONGUID, AUTHPRODUCTPAGEGUID, AUTHBUTTONGUID) SELECT '%s', AUTHPRODUCTPAGEGUID, '%s' FROM ASAUTHPRODUCTPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPRODUCTGUID IN (SELECT AUTHPRODUCTGUID FROM ASAUTHPRODUCT WHERE PRODUCTGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
-                esc(newGuid), esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
+                "INSERT INTO ASAUTHPRODUCTPAGEBUTTON (AUTHPRODUCTPAGEGUID, AUTHBUTTONGUID) SELECT AUTHPRODUCTPAGEGUID, '%s' FROM ASAUTHPRODUCTPAGE WHERE AUTHPAGEGUID = '%s' AND AUTHPRODUCTGUID IN (SELECT AUTHPRODUCTGUID FROM ASAUTHPRODUCT WHERE PRODUCTGUID = '%s' AND AUTHCOMPANYGUID IN (SELECT AUTHCOMPANYGUID FROM ASAUTHCOMPANY WHERE COMPANYGUID = '%s' AND SECURITYGROUPGUID = '%s'));",
+                esc(p[4]), esc(p[3]), esc(p[2]), esc(p[1]), esc(p[0])));
         });
         // Product transactions
         diff(incomingProductTransactionKeys, existingProductTransactionKeys).forEach(k -> {
@@ -1365,9 +1363,61 @@ public class SecurityGroupService {
         return a.stream().filter(k -> !b.contains(k)).collect(Collectors.toList());
     }
 
+    /** Execute generated delta SQL scripts on secondaryDev database. */
+    @Transactional(value = "secondaryDevTransactionManager")
+    public void executeScripts(List<String> scripts) {
+        if (scripts == null || scripts.isEmpty()) {
+            return;
+        }
+        JdbcTemplate jdbc = new JdbcTemplate(secondaryDevDataSource);
+        List<String> batch = new ArrayList<>();
+        int batchSize = 200;
+        int batchCount = 0;
+        int totalExecuted = 0;
+        System.out.println("Starting execution of " + scripts.size() + " scripts with batch size " + batchSize);
+        long startTime = System.currentTimeMillis();
+        for (String script : scripts) {
+            if (script == null) continue;
+            String trimmed = script.trim();
+            // Skip comments and empty lines
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) {
+                continue;
+            }
+            // Strip trailing semicolon if present
+            if (trimmed.endsWith(";")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+            }
+            if (!trimmed.isEmpty()) {
+                batch.add(trimmed);
+                if (batch.size() >= batchSize) {
+                    batchCount++;
+                    totalExecuted += batch.size();
+                    System.out.println("Executing batch #" + batchCount + " (" + batch.size() + " statements, total executed: " + totalExecuted + ")...");
+                    long startBatch = System.currentTimeMillis();
+                    jdbc.batchUpdate(batch.toArray(new String[0]));
+                    long endBatch = System.currentTimeMillis();
+                    System.out.println("Batch #" + batchCount + " executed in " + (endBatch - startBatch) + " ms.");
+                    batch.clear();
+                }
+            }
+        }
+        if (!batch.isEmpty()) {
+            batchCount++;
+            totalExecuted += batch.size();
+            System.out.println("Executing final batch #" + batchCount + " (" + batch.size() + " statements, total executed: " + totalExecuted + ")...");
+            long startBatch = System.currentTimeMillis();
+            jdbc.batchUpdate(batch.toArray(new String[0]));
+            long endBatch = System.currentTimeMillis();
+            System.out.println("Final batch #" + batchCount + " executed in " + (endBatch - startBatch) + " ms.");
+        }
+        long endTime = System.currentTimeMillis();
+        System.out.println("Total script execution finished in " + (endTime - startTime) + " ms.");
+    }
+
     /** Escape single quotes for safe SQL string literals. */
     private String esc(String value) {
         if (value == null) return "";
         return value.replace("'", "''");
     }
 }
+
