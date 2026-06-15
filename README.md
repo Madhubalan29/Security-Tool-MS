@@ -31,25 +31,18 @@ The application operates as a **read-only manager** that inspects existing confi
 
 ## Configuration & Environment Setup
 
-Configure the application by modifying the `src/main/resources/application.properties` file. The tool supports multiple database environments:
+Configure the application by modifying the `src/main/resources/application.yml` file. The tool supports the database environment:
 
-```properties
-server.port=8015
+```yaml
+server:
+  port: 8015
 
-# Primary Data Source (Source Database)
-spring.datasource.primary.jdbc-url=jdbc:oracle:thin:@//<host>:<port>/<service_name>
-spring.datasource.primary.username=<username>
-spring.datasource.primary.password=<password>
-
-# Secondary Data Source (Target/UAT Database)
-spring.datasource.secondary.jdbc-url=jdbc:oracle:thin:@//<host>:<port>/<service_name>
-spring.datasource.secondary.username=<username>
-spring.datasource.secondary.password=<password>
-
-# Secondary Dev Data Source (Development Database)
-spring.datasource.secondary-dev.jdbc-url=jdbc:oracle:thin:@//<host>:<port>/<service_name>
-spring.datasource.secondary-dev.username=<username>
-spring.datasource.secondary-dev.password=<password>
+spring:
+  datasource:
+    secondary-dev:
+      jdbc-url: jdbc:oracle:thin:@//<host>:<port>/<service_name>
+      username: <username>
+      password: "<password>"
 ```
 
 ---
