@@ -20,11 +20,6 @@ spring:
 
 server:
   port: 8015
-  ssl:
-    key-store: classpath:keystore.p12
-    key-store-password: changeit
-    key-store-type: PKCS12
-    key-alias: tomcat
 
 logging:
   level:
